@@ -1,0 +1,23 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Secret values — copy .env.example and fill in your credentials
+.env
+
+# Live deployment configs — copy *.example and customise for your environment
+talos.yaml
+kagent.yaml
+
+# Generated Config directories (talos + kagent)
+config-*/
+
+#
+UA_K8S.md
