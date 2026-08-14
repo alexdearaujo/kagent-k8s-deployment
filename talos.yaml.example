@@ -1,0 +1,53 @@
+cluster:
+  name: talos-lab
+  # Must match the IP of the first control-plane node (or a VIP for HA setups)
+  endpoint: 192.168.0.10
+  talos_version: v1.10.0
+
+proxmox:
+  host: pve-1
+  node: pve-1
+  iso_path: images:iso/talos-metal-amd64.iso
+  storage_pool: local-lvm
+  bridge: vmbr0
+  vlan_tag: 100
+
+network:
+  gateway: 192.168.0.1
+  # Predictable NIC name for QEMU virtio; common alternatives: enp6s18, ens3, eth0
+  interface: ens18
+  nameservers:
+    - 1.1.1.1
+    - 8.8.8.8
+  subnet_prefix: 24
+
+nodes:
+  - vmid: 300
+    name: talos-cp-1
+    role: controlplane
+    ip: 192.168.0.10
+    memory: 4096
+    cores: 2
+    disk_gb: 20
+
+  - vmid: 301
+    name: talos-worker-1
+    role: worker
+    ip: 192.168.0.11
+    memory: 2048
+    cores: 2
+    disk_gb: 20
+
+  - vmid: 302
+    name: talos-worker-2
+    role: worker
+    ip: 192.168.0.12
+    memory: 2048
+    cores: 2
+    disk_gb: 20
+
+metallb:
+  # Single IP or range for LoadBalancer services (CIDR or dash-range format)
+  lb_address: 192.168.0.200/32
+  pool_name: homelab
+  version: v0.14.9
