@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -103,12 +104,34 @@ def load_config(config_path: str | Path = "kagent.yaml", replicas: int | None = 
         cpu_limit=raw.get("resources", {}).get("limits", {}).get("cpu", "1"),
         memory_request=raw.get("resources", {}).get("requests", {}).get("memory", "256Mi"),
         memory_limit=raw.get("resources", {}).get("limits", {}).get("memory", "512Mi"),
-        linux_capabilities=raw.get("linux_capabilities", ["NET_RAW"]),
+        linux_capabilities=raw.get(
+            "linux_capabilities",
+            ["NET_RAW", "SYS_CHROOT", "SETUID", "SETGID"],
+        ),
         inbound_services=inbound,
     )
 
 
 # --- Provisioning token ---
+
+def existing_provisioning_token(release_name: str, namespace: str) -> str | None:
+    """Token already held by the release, so re-runs don't mint a stray one.
+
+    A registered agent authenticates with its keypair, not the token, so a fresh
+    token would only accumulate unapproved entries in the Portal.
+    """
+    result = subprocess.run(
+        ["helm", "get", "values", release_name, "-n", namespace, "-o", "json"],
+        capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        values = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    return (values or {}).get("kagent", {}).get("provisioningToken") or None
+
 
 def generate_provisioning_token(cfg: KagentConfig) -> str:
     if not cfg.api_email or not cfg.api_token:
@@ -216,14 +239,14 @@ def check_storage_class(storage_class: str, cfg_dir: Path) -> None:
             sys.exit(1)
         return
 
-    # No explicit class — check for a default; auto-install local-path if missing
+    # No explicit class: check for a default; auto-install local-path if missing
     result = subprocess.run(
         ["kubectl", "get", "storageclass", "-o",
          "jsonpath={.items[?(@.metadata.annotations.storageclass\\.kubernetes\\.io/is-default-class==\"true\")].metadata.name}"],
         capture_output=True, text=True, check=False,
     )
     if not result.stdout.strip():
-        print("  No default StorageClass found — installing local-path-provisioner...")
+        print("  No default StorageClass found, installing local-path-provisioner...")
         _install_local_path_provisioner(cfg_dir)
     else:
         # Provisioner may already be installed; ensure its namespace is privileged
@@ -269,7 +292,7 @@ def create_keypair_secrets(cfg: KagentConfig) -> None:
         print(f"  Generating keypair for replica {i}...")
         private_pem, public_pem = _generate_keypair()
 
-        # Back up PEM files — store these securely and never commit unencrypted
+        # Back up PEM files: store these securely and never commit unencrypted
         (key_dir / f"private_key_{i}.pem").write_text(private_pem)
         (key_dir / f"public_key_{i}.pem").write_text(public_pem)
 
@@ -285,7 +308,7 @@ def create_keypair_secrets(cfg: KagentConfig) -> None:
         )
         print(f"  ✅ {secret_name} created.")
 
-    print("  ℹ️  Keypair backups written to config-kagent/keys/ — store these securely.")
+    print("  ℹ️  Keypair backups written to config-kagent/keys/. Store these securely.")
 
 
 # --- Namespace ---
@@ -408,7 +431,7 @@ def create_inbound_services(cfg: KagentConfig) -> None:
     if not ports:
         return
 
-    # Single Service with all inbound ports — avoids MetalLB IP-sharing complexity
+    # Single Service with all inbound ports: avoids MetalLB IP-sharing complexity
     annotations: dict = {}
     if svc.service_type == "LoadBalancer" and svc.shared_lb_ip:
         annotations["metallb.universe.io/loadBalancerIPs"] = svc.shared_lb_ip
@@ -466,7 +489,7 @@ def wait_for_service_ips(cfg: KagentConfig, timeout: int = 120) -> None:
     print(f"\n  All inbound traffic → {ip}")
     print("  Configure network devices to send:")
     if svc.flow_enabled:
-        print(f"    Flow     → {ip}:{svc.flow_port} (UDP — NetFlow/sFlow/IPFIX)")
+        print(f"    Flow     → {ip}:{svc.flow_port} (UDP: NetFlow/sFlow/IPFIX)")
     if svc.snmp_trap_enabled:
         print(f"    SNMP trap → {ip}:{svc.snmp_trap_port}")
     if svc.syslog_enabled:
@@ -483,13 +506,12 @@ def helm_install(cfg: KagentConfig) -> bool:
         "--set", "deploymentType=statefulset",
         "--set", f"replicaCount={cfg.replica_count}",
         "--set", "persistence.keypair.type=secret",
-        # allowPrivilegeEscalation=true required for non-root process to hold capabilities in CapEff
-        "--set", "securityContext.allowPrivilegeEscalation=true",
-        # runAsUser=0 required: ambient caps are cleared on setresuid root→non-root
+        "--set", "securityContext.allowPrivilegeEscalation=false",
+        # runAsUser=0 is required: a non-root process gets no capabilities at all
+        # (no file caps, no ambient), so capabilities.add lands only in CapBnd
+        # and CapEff stays 0. Measured as uid 500: CapEff 0x0 vs 0x434c0 as root.
         "--set", "podSecurityContext.runAsNonRoot=false",
         "--set", "podSecurityContext.runAsUser=0",
-        # hostNetwork=true: pod shares host network namespace so source IPs are never masqueraded by CNI
-        "--set", "hostNetwork=true",
         "--set-string", f"kagent.companyId={cfg.company_id}",
         "--set", f"resources.requests.cpu={cfg.cpu_request}",
         "--set", f"resources.requests.memory={cfg.memory_request}",
@@ -509,6 +531,58 @@ def helm_install(cfg: KagentConfig) -> bool:
     subprocess.run(cmd, check=True)
     print("  ✅ Helm release applied.")
     return is_upgrade
+
+
+def patch_host_network(cfg: KagentConfig) -> None:
+    """Put the pod in the host network namespace.
+
+    Required for Kentik to ingest flow at all: without it the CNI rewrites the
+    UDP source address to a Flannel pod IP, and Kentik drops records it cannot
+    match to a registered device. The upstream chart exposes no hostNetwork
+    value, so `--set hostNetwork=true` is silently discarded and the rendered
+    StatefulSet must be patched directly.
+
+    Enabling hostNetwork also breaks the chart's keypair init container, which
+    derives the StatefulSet ordinal from $HOSTNAME: in the host UTS namespace
+    that is the node's name, not the pod's. An explicitly declared env var wins
+    over the runtime-supplied one, so overriding HOSTNAME fixes the ordinal
+    without touching the container's command, which Helm owns and would
+    otherwise conflict with on every upgrade.
+    """
+    patch = {
+        "spec": {
+            "template": {
+                "spec": {
+                    "hostNetwork": True,
+                    # Host netns otherwise resolves via the node's resolv.conf, losing cluster DNS
+                    "dnsPolicy": "ClusterFirstWithHostNet",
+                    "initContainers": [
+                        {
+                            "name": "setup-keypair",
+                            "env": [
+                                {
+                                    "name": "HOSTNAME",
+                                    "valueFrom": {
+                                        "fieldRef": {"fieldPath": "metadata.name"}
+                                    },
+                                }
+                            ],
+                        }
+                    ],
+                }
+            }
+        }
+    }
+    subprocess.run(
+        # Strategic merge, not JSON merge: initContainers must merge by name
+        # rather than replace the whole list.
+        ["kubectl", "patch", "statefulset", cfg.release_name,
+         "-n", cfg.namespace, "--type=strategic", "-p", json.dumps(patch)],
+        check=True,
+        capture_output=True,
+    )
+    print("  ✅ hostNetwork enabled: real device source IPs preserved in flow.")
+    print("  ✅ Keypair init container HOSTNAME pinned to the pod name.")
 
 
 def rollout_restart(cfg: KagentConfig) -> None:
@@ -585,11 +659,13 @@ def dry_run(cfg: KagentConfig) -> None:
     print(f"Company ID   : {cfg.company_id}")
     if cfg.provisioning_token:
         print("Prov. token  : set (from KENTIK_PROVISIONING_TOKEN)")
+    elif existing_provisioning_token(cfg.release_name, cfg.namespace):
+        print("Prov. token  : will reuse the token already in the Helm release")
     elif cfg.api_email and cfg.api_token:
         print(f"Prov. token  : will be generated via API (name: {cfg.token_name}, "
               f"max_usage: {cfg.replica_count}, auto_approve: {cfg.auto_approve})")
     else:
-        print("Prov. token  : not set — set KENTIK_PROVISIONING_TOKEN or provide "
+        print("Prov. token  : not set. Set KENTIK_PROVISIONING_TOKEN or provide "
               "K_API_EMAIL + K_API_TOKEN to auto-generate")
     print(f"Capabilities : {', '.join(cfg.linux_capabilities)}")
     print()
@@ -611,10 +687,14 @@ def dry_run(cfg: KagentConfig) -> None:
         print(f"  {cfg.release_name}-{i}")
     print("\nSteps:")
     steps = [
-        "0. Generate provisioning token via Kentik API (skipped if KENTIK_PROVISIONING_TOKEN is set)",
+        (
+            "0. Provisioning token: reuse from the existing release or "
+            "KENTIK_PROVISIONING_TOKEN, else generate one via the Kentik API"
+        ),
         "1. Ensure namespace exists (with PodSecurity: privileged)",
         "2. Generate ed25519 keypairs and create k8s secrets",
         "3. helm upgrade --install (StatefulSet, capabilities: " + ", ".join(cfg.linux_capabilities) + ")",
+        "3a. Patch StatefulSet: hostNetwork, dnsPolicy, keypair init container ordinal",
         "4. Wait for all pods to reach Running state",
         "5. Create/update inbound Services for flow, SNMP traps, syslog",
     ]
@@ -650,8 +730,14 @@ def main() -> None:
     check_load_balancer(cfg.inbound_services.service_type)
 
     if not cfg.provisioning_token:
-        print("=== Step 0: Generating provisioning token ===")
-        cfg.provisioning_token = generate_provisioning_token(cfg)
+        cfg.provisioning_token = existing_provisioning_token(
+            cfg.release_name, cfg.namespace
+        )
+        if cfg.provisioning_token:
+            print("=== Step 0: Reusing provisioning token from existing release ===")
+        else:
+            print("=== Step 0: Generating provisioning token ===")
+            cfg.provisioning_token = generate_provisioning_token(cfg)
 
     print("=== Step 1: Namespace ===")
     ensure_namespace(cfg.namespace)
@@ -664,6 +750,13 @@ def main() -> None:
         is_upgrade = helm_install(cfg)
     except subprocess.CalledProcessError as e:
         print(f"  ❌ Helm failed: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    print("\n=== Step 3a: hostNetwork patch ===")
+    try:
+        patch_host_network(cfg)
+    except subprocess.CalledProcessError as e:
+        print(f"  ❌ hostNetwork patch failed: {e.stderr or e}", file=sys.stderr)
         sys.exit(1)
 
     if is_upgrade:

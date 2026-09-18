@@ -12,11 +12,63 @@ token_name: ""
 auto_approve: false
 
 # Resource requests and limits per pod.
-# Defaults are lab-sized; increase for production (KB recommends cpu: 1/2, memory: 1024Mi/4096Mi)
+# Every capability (kagent, ksynth, kproxy, ranger, livesynth) runs as a sibling
+# process in one container, sharing a single memory cgroup with no per-capability
+# isolation. 4096Mi is the chart default and the KB recommendation.
+# The limit is not scheduling-constrained, so the node hosting the pod must have
+# more allocatable memory than this value, or the container can trigger
+# node-level OOM and kubelet eviction.
 resources:
   requests:
-    cpu: "250m"
-    memory: "256Mi"
-  limits:
     cpu: "1"
-    memory: "512Mi"
+    memory: "1024Mi"
+  limits:
+    cpu: "2"
+    memory: "4096Mi"
+
+# Linux capabilities granted to the container.
+# The chart drops ALL capabilities and adds back only what is listed here.
+# Add only what your enabled capabilities require:
+#   NET_RAW          = ksynth, livesynth, ranger/NMS (ICMP raw sockets)
+#   NET_ADMIN        = livesynth scamper advanced probes, kdns
+#   NET_BIND_SERVICE = ksnmptrap (162), ksyslog (514), kbgp (179), privileged ports
+#   SYS_CHROOT       = scamper privsep chroots to /var/empty
+#   SETUID, SETGID   = scamper privsep drops the probe half to an unprivileged user
+# Without the last three, scamper_privsep_init fails and every ping or trace
+# returns "could not open icmp4 socket: Operation not permitted", even though
+# NET_RAW is present. Required for ksynth and livesynth only.
+linux_capabilities:
+  - NET_RAW
+  - NET_ADMIN
+  - NET_BIND_SERVICE
+  - SYS_CHROOT
+  - SETUID
+  - SETGID
+
+# Inbound traffic services for capabilities that receive data from devices.
+# Capabilities are enabled or disabled in the Kentik Portal; these Services
+# pre-create the stable IP:port endpoints before the Portal pushes configs.
+inbound_services:
+  # LoadBalancer requires MetalLB (or a cloud provider).
+  # NodePort exposes a high port on each node IP and needs no MetalLB.
+  type: LoadBalancer
+
+  # All inbound Services share this single IP. It must match an IP in your
+  # MetalLB IPAddressPool. Leave empty to let MetalLB assign IPs automatically.
+  shared_lb_ip: 192.168.0.13
+
+  # ksqueegee/kproxy receives all flow protocols on a single port.
+  # The Kentik agent default receiver port is 9995.
+  flow:
+    enabled: true
+    port: 9995
+
+  # ksnmptrap receives SNMP traps from network devices
+  snmp_trap:
+    enabled: true
+    port: 162
+
+  # ksyslog receives syslog messages from network devices
+  syslog:
+    enabled: true
+    port: 514
