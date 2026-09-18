@@ -1093,7 +1093,7 @@ POD_INDEX=$(echo $HOSTNAME | grep -o '[0-9]*$')
 ```
 
 Under `hostNetwork: true` the pod shares the **node's** UTS namespace,
-so `$HOSTNAME` is the node name (`talos-49f-a7v`), not the pod name
+so `$HOSTNAME` is the node name (`talos-abc-xyz`), not the pod name
 (`kagent-0`). A node name that does not end in digits yields an empty
 ordinal, the copy is skipped, and the failure is silent:
 
