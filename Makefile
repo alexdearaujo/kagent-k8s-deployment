@@ -23,10 +23,14 @@ test: ## Contract tests, including the rendered Helm manifest
 docs: ## Markdown lint
 	npx --yes markdownlint-cli2
 
+# The loaders read credentials from the environment. CI has no .env, so supply
+# dummies: a dry run never contacts Proxmox or Kentik.
+DUMMY_ENV := KENTIK_COMPANY_ID=test PROXMOX_USER=test \
+	PROXMOX_TOKEN_NAME=test PROXMOX_TOKEN_SECRET=test
+
 plan: ## Both deploy scripts must produce a plan from the example configs
-	KENTIK_COMPANY_ID=000000 uv run deploy-talos --dry-run > /dev/null
-	KENTIK_COMPANY_ID=000000 uv run deploy-kagent \
-		--config kagent.yaml.example --dry-run > /dev/null
+	$(DUMMY_ENV) uv run deploy-talos --config talos.yaml.example --dry-run > /dev/null
+	$(DUMMY_ENV) uv run deploy-kagent --config kagent.yaml.example --dry-run > /dev/null
 	@echo "  dry runs OK"
 
 secrets: ## Scan history for committed credentials (needs gitleaks)

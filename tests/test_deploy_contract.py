@@ -15,7 +15,16 @@ from unittest import mock
 import pytest
 import yaml
 
-os.environ.setdefault("KENTIK_COMPANY_ID", "000000")
+# The loaders read credentials from the environment, and python-dotenv pulls in
+# a local .env when one exists. Pin dummies first so the suite behaves the same
+# on a developer machine and on a runner with no .env.
+for _var in (
+    "KENTIK_COMPANY_ID",
+    "PROXMOX_USER",
+    "PROXMOX_TOKEN_NAME",
+    "PROXMOX_TOKEN_SECRET",
+):
+    os.environ[_var] = "test"
 
 from deploy_talos_proxmox import deploy_kagent as dk
 from deploy_talos_proxmox.config import load_config as load_talos_config
