@@ -432,13 +432,14 @@ def main() -> None:
                         help="Skip Talos phases and only install/configure MetalLB on an existing cluster")
     args = parser.parse_args()
 
-    check_talosctl()
-
     cluster = load_config(args.config)
 
+    # Printing a plan touches nothing, so it runs before the preflight check.
     if args.dry_run:
         dry_run(cluster)
         return
+
+    check_talosctl()
 
     if args.metallb_only:
         print(f"=== MetalLB only: {cluster.name} ===")

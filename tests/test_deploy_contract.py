@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from unittest import mock
 
@@ -171,6 +172,23 @@ def test_chart_keypair_init_still_reads_hostname(rendered_statefulset) -> None:
     assert init, "chart no longer defines setup-keypair"
     assert "$HOSTNAME" in init[0]["command"][-1]
     assert "env" not in init[0], "chart now sets env; the patch may conflict"
+
+
+def test_talos_dry_run_needs_no_external_tools() -> None:
+    """A plan touches nothing, so it must not require talosctl to be installed."""
+    from deploy_talos_proxmox import deploy_talos as dt
+
+    argv = ["deploy-talos", "--config", str(TALOS_EXAMPLE), "--dry-run"]
+    with mock.patch.object(dt.shutil, "which", return_value=None), \
+         mock.patch.object(sys, "argv", argv):
+        dt.main()
+
+
+def test_kagent_dry_run_needs_no_external_tools() -> None:
+    argv = ["deploy-kagent", "--config", str(KAGENT_EXAMPLE), "--dry-run"]
+    with mock.patch.object(dk.shutil, "which", return_value=None), \
+         mock.patch.object(sys, "argv", argv):
+        dk.main()
 
 
 # --- Repository hygiene ------------------------------------------------------
