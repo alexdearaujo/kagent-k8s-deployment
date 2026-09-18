@@ -24,13 +24,15 @@ Always use `uv`. Never call `pip`, `python -m venv` or a global interpreter.
 
 | Command | Does |
 | --- | --- |
-| `make validate` | Everything CI runs: lint, tests, markdown lint, dry runs |
-| `make lint` | `ruff check src/ tests/` |
+| `make validate` | Everything CI runs: lint, tests, markdown lint, dry runs, privacy scan |
+| `make lint` | `ruff check src/ tests/ tools/` |
 | `make test` | `pytest tests/ -q` |
 | `make docs` | `markdownlint-cli2` over every Markdown file |
 | `make plan` | Both scripts must produce a plan from the `*.example` configs |
+| `make privacy` | Scans every tracked file for private information |
+| `make pre-commit` | Staged-only privacy scan plus `gitleaks`. What the hook runs |
 | `make secrets` | `gitleaks` scan of the working tree and history |
-| `make install-hooks` | Installs a pre-push hook that runs `make validate` |
+| `make install-hooks` | Installs the `pre-commit` and `pre-push` hooks |
 
 Run `make validate` before you commit. The GitHub Actions workflow in
 [.github/workflows/validate.yml](.github/workflows/validate.yml) calls the
@@ -48,6 +50,7 @@ part of an unrelated change.
 | `src/deploy_talos_proxmox/deploy_talos.py` | VM creation, `talosctl` config generation, bootstrap |
 | `src/deploy_talos_proxmox/deploy_kagent.py` | Helm install/upgrade plus the post-install `kubectl patch` steps |
 | `tests/test_deploy_contract.py` | Contract tests. Each one maps to a defect that reached production |
+| `tools/privacy_scan.py` | Pre-commit scanner for private information. Not part of the shipped package |
 | `docs/kagent-synthetics-values.md` | Customer-facing guide to the Helm values |
 | `utils/` | Standalone shell helpers for Kentik provisioning tokens |
 
@@ -61,6 +64,8 @@ part of an unrelated change.
   and `kagent.yaml.example` are the tracked versions.
 - `config-talos/` and `config-kagent/` are generated. They contain machine
   configs, the Talos PKI and the agent keypairs.
+- `.privacy-terms` lists customer names for the scanner. Writing them down
+  is the leak, so the file itself is never committed.
 
 When you change a real config, mirror the structural change into its
 `.example` twin with placeholder values. The tests load the examples, so an
@@ -70,6 +75,21 @@ production.
 Never put a real hostname, IP, token, company ID or agent ID in a tracked
 file. Talos node names are randomly suffixed and are easy to paste in by
 accident.
+
+### The privacy scan
+
+`make install-hooks` puts [tools/privacy_scan.py](tools/privacy_scan.py) in
+front of every commit, alongside `gitleaks`. The split matters: `gitleaks`
+matches credential formats, the scanner matches data that is private
+because of what it refers to (IP addresses including RFC1918, MAC
+addresses, emails, real Talos node names, listed customer terms).
+
+The repository publishes example addresses on purpose, so deliberate values
+are allowlisted in [.privacy-scan.toml](.privacy-scan.toml). When a scan
+fails, fix the content first. Only widen the allowlist when the value is
+genuinely public, and never broaden an entry to a whole range to silence
+one finding. `# privacy-scan: allow` on a line is a last resort, because it
+hides that line from every rule.
 
 ## Invariants the tests protect
 

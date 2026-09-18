@@ -41,6 +41,11 @@ jobs:
       - name: Deploy plans render from the example configs
         run: make plan
 
+      # The identity half of the leak gate. gitleaks, in the job below,
+      # covers credential formats; this covers addresses and names.
+      - name: Privacy scan
+        run: make privacy
+
   secrets:
     runs-on: ubuntu-latest
     steps:

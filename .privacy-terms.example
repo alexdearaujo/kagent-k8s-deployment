@@ -1,0 +1,13 @@
+# Copy to .privacy-terms and fill in. That file is gitignored, because the
+# terms it holds are exactly what must never be committed.
+#
+# One term per line, matched case-insensitively on word boundaries across
+# every file the scanner reads. Lines starting with # are ignored.
+#
+# Put here anything that identifies a customer or a real environment:
+#
+#   Contoso
+#   Contoso Financial
+#   pve-prod-dc1
+#   corp.contoso.example
+#   CONTOSO-CORE-SW01

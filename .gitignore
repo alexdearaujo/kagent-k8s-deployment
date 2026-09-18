@@ -12,6 +12,10 @@ wheels/
 # Secret values: copy .env.example and fill in your credentials
 .env
 
+# Customer names and real hostnames fed to tools/privacy_scan.py. The whole
+# point of this file is that its contents must never be committed.
+.privacy-terms
+
 # Live deployment configs: copy *.example and customise for your environment
 talos.yaml
 kagent.yaml
