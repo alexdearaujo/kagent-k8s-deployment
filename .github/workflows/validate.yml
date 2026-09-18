@@ -1,0 +1,57 @@
+name: validate
+
+on:
+  push:
+    branches-ignore: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      # The contract tests render the upstream chart to assert that the
+      # capabilities and security context survive templating.
+      - name: Install helm
+        uses: azure/setup-helm@v4
+
+      - name: Sync dependencies
+        run: uv sync --all-groups
+
+      - name: Lint
+        run: make lint
+
+      - name: Contract tests
+        run: make test
+
+      - name: Markdown lint
+        run: make docs
+
+      - name: Deploy plans render from the example configs
+        run: make plan
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # config-talos/talosconfig carries an os:admin cluster certificate and
+      # config-kagent/keys holds the agent's private keys. Both are gitignored;
+      # this catches a force-add or a path that skips the config-* prefix.
+      - name: Scan for committed credentials
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

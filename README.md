@@ -1200,6 +1200,41 @@ To exclude SNMP from sync:
 
 ## 9. Reference
 
+### Validation
+
+`make validate` runs every check that CI runs. It needs no cluster and
+no Proxmox, and finishes in a few seconds.
+
+| Target | Checks |
+| --- | --- |
+| `make lint` | `ruff` static analysis |
+| `make test` | Contract tests, including the rendered Helm manifest |
+| `make docs` | `markdownlint` |
+| `make plan` | Both deploy scripts produce a plan from the examples |
+| `make secrets` | `gitleaks` history scan (install it separately) |
+
+Run the same checks automatically before every push:
+
+```bash
+make install-hooks
+```
+
+The contract tests in [tests/](tests/) assert the parts of a deployment
+that stay invisible until a cluster runs. Each one corresponds to a
+defect that reached a live agent at least once:
+
+- The example config grants the capabilities that scamper privsep needs.
+- The rendered StatefulSet still carries them after templating.
+- The pod runs as root, because a non-root process receives no
+  capabilities at all.
+- Worker nodes are large enough to back the agent's memory limit.
+- No credentials or generated key material are tracked.
+
+Two tests watch the upstream chart rather than this repository. They
+fail when `kagent-helm` starts supporting `hostNetwork`, or when it
+stops deriving the StatefulSet ordinal from `$HOSTNAME`. Either change
+means the patches in `deploy-kagent` need review.
+
 ### Configuration files
 
 | File | Purpose | Committed to git? |
