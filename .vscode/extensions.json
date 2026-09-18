@@ -1,0 +1,10 @@
+{
+  // Mirrors what `make validate` enforces, so the editor flags the same
+  // issues CI does.
+  "recommendations": [
+    "charliermarsh.ruff",
+    "ms-python.python",
+    "ms-python.vscode-pylance",
+    "DavidAnson.vscode-markdownlint"
+  ]
+}

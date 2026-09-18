@@ -19,5 +19,13 @@ kagent.yaml
 # Generated Config directories (talos + kagent)
 config-*/
 
+# Editor settings: share the project-level files, ignore everything VS Code
+# drops in here per machine.
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+
 #
 UA_K8S.md
