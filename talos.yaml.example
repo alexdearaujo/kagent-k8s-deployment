@@ -30,20 +30,23 @@ nodes:
     cores: 2
     disk_gb: 20
 
+  # Both workers are sized alike. kagent's local-path PV carries node affinity,
+  # so the pod is pinned to whichever worker first bound it and cannot move.
+  # The node must be able to back the agent's 4096Mi memory limit.
   - vmid: 301
     name: talos-worker-1
     role: worker
     ip: 192.168.0.11
-    memory: 2048
-    cores: 2
+    memory: 8192
+    cores: 4
     disk_gb: 20
 
   - vmid: 302
     name: talos-worker-2
     role: worker
     ip: 192.168.0.12
-    memory: 2048
-    cores: 2
+    memory: 8192
+    cores: 4
     disk_gb: 20
 
 metallb:

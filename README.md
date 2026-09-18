@@ -1,4 +1,4 @@
-# Kentik Universal Agent — Complete Deployment Guide
+# Kentik Universal Agent Deployment Guide
 
 This guide describes how to deploy a Kentik Universal Agent (`kagent`)
 on a Kubernetes cluster running on Talos Linux inside Proxmox VE. The
@@ -15,9 +15,9 @@ and pre-conditions.
 - [1. Architecture Overview](#1-architecture-overview)
 - [2. Environment Topology](#2-environment-topology)
 - [3. Prerequisites](#3-prerequisites)
-- [4. Part 1 — Kubernetes Cluster](#4-part-1--kubernetes-cluster)
-- [5. Part 2 — Kentik Agent](#5-part-2--kentik-agent)
-- [6. Part 3 — Network Telemetry](#6-part-3--network-telemetry)
+- [4. Part 1: Kubernetes Cluster](#4-part-1-kubernetes-cluster)
+- [5. Part 2: Kentik Agent](#5-part-2-kentik-agent)
+- [6. Part 3: Network Telemetry](#6-part-3-network-telemetry)
 - [7. Verification](#7-verification)
 - [8. Troubleshooting](#8-troubleshooting)
 - [9. Reference](#9-reference)
@@ -28,14 +28,14 @@ and pre-conditions.
 
 The deployment has three main components:
 
-1. **Proxmox VE** — the hypervisor that runs the virtual machines
-2. **Talos Linux** — an immutable Linux OS optimised for Kubernetes
-3. **kagent** — the Kentik Universal Agent that collects telemetry
+1. **Proxmox VE**: the hypervisor that runs the virtual machines
+2. **Talos Linux**: an immutable Linux OS optimised for Kubernetes
+3. **kagent**: the Kentik Universal Agent that collects telemetry
 
 ```mermaid
 graph TB
     subgraph Proxmox["Proxmox VE Hypervisor"]
-        subgraph Kubernetes["Kubernetes Cluster — Talos Linux"]
+        subgraph Kubernetes["Kubernetes Cluster (Talos Linux)"]
             subgraph CP_VM["talos-cp-1  ·  192.168.1.50"]
                 CTRL["control-plane\netcd · kube-apiserver"]
             end
@@ -61,7 +61,7 @@ graph TB
     FW -->|"NetFlow UDP 9995"| VIP
     SW -->|"NetFlow UDP 9995"| VIP
     VIP --> SVC
-    SVC -->|"Direct — no NAT\nhostNetwork"| POD
+    SVC -->|"Direct, no NAT\nhostNetwork"| POD
     POD -->|"gRPC TLS 443\noutbound"| Kentik
     FW <-->|"SNMP UDP 161\noutbound poll"| POD
 ```
@@ -70,7 +70,8 @@ graph TB
 
 | Decision | Reason |
 | --- | --- |
-| `hostNetwork: true` on the pod | Preserves the real source IP in flow records. Without this, CNI masquerades the source with a Flannel internal address, and Kentik cannot identify the device. |
+| `hostNetwork: true` on the pod | **Mandatory.** Preserves the real source IP in flow records. Without this, CNI masquerades the source with a Flannel internal address, Kentik cannot match the record to a registered device, and the flow is discarded. See [The source IP problem](#the-source-ip-problem-why-hostnetwork-is-required). |
+| `dnsPolicy: ClusterFirstWithHostNet` | A pod in the host network namespace otherwise resolves through the node's `resolv.conf` and loses cluster DNS. |
 | `externalTrafficPolicy: Local` | Prevents a second SNAT layer when the LoadBalancer routes traffic to the pod. |
 | MetalLB in L2 mode | The simplest LoadBalancer option for bare-metal clusters. The VIP is announced via ARP on the VLAN. |
 | StatefulSet with Secret keypairs | The agent identity keypair must survive pod restarts. Kubernetes Secrets provide stable storage independent of the pod lifecycle. |
@@ -95,7 +96,7 @@ graph TB
 
 ```mermaid
 graph LR
-    subgraph VLAN100["VLAN 100 — 192.168.1.0/24\nKubernetes Management"]
+    subgraph VLAN100["VLAN 100: 192.168.1.0/24\nKubernetes Management"]
         CP
         W1
         W2
@@ -168,7 +169,7 @@ cp kagent.yaml.example kagent.yaml
 Edit `.env` and replace every placeholder with a real value:
 
 ```bash
-# .env — secrets only, never commit this file
+# .env: secrets only, never commit this file
 PROXMOX_USER="root@pam"
 PROXMOX_TOKEN_NAME="your-token-id"
 PROXMOX_TOKEN_SECRET="your-token-secret-uuid"
@@ -180,12 +181,12 @@ K_API_TOKEN="your-kentik-api-token"
 
 ---
 
-## 4. Part 1 — Kubernetes Cluster
+## 4. Part 1: Kubernetes Cluster
 
 This part deploys three Talos Linux virtual machines in Proxmox and
 bootstraps a Kubernetes cluster.
 
-### Step 1 — Configure the cluster topology
+### Step 1: Configure the cluster topology
 
 Edit `talos.yaml` to match your environment:
 
@@ -222,14 +223,14 @@ nodes:
     name: talos-worker-1
     role: worker
     ip: 192.168.1.51
-    memory: 2048
+    memory: 8192
     cores: 2
     disk_gb: 20
   - vmid: 302
     name: talos-worker-2
     role: worker
     ip: 192.168.1.52
-    memory: 2048
+    memory: 8192
     cores: 2
     disk_gb: 20
 
@@ -263,7 +264,7 @@ Update `network.interface` in `talos.yaml` to match.
 
 </details>
 
-### Step 2 — Preview the deployment plan
+### Step 2: Preview the deployment plan
 
 Always preview before executing:
 
@@ -274,7 +275,7 @@ uv run deploy-talos --dry-run
 The output lists all 13 phases and shows your exact configuration.
 Verify the node IPs, Proxmox host, and MetalLB IP before continuing.
 
-### Step 3 — Deploy the cluster
+### Step 3: Deploy the cluster
 
 ```bash
 uv run deploy-talos
@@ -302,7 +303,7 @@ The script runs the following phases in sequence:
 > If the cluster already exists and you need to run only MetalLB
 > phases, use `uv run deploy-talos --metallb-only`.
 
-### Step 4 — Verify the cluster
+### Step 4: Verify the cluster
 
 ```bash
 kubectl get nodes -o wide
@@ -323,7 +324,7 @@ Check the node's kernel messages for network errors:
 
 ```bash
 talosctl dmesg --nodes 192.168.1.50 \
-  --talosconfig talos-config/talosconfig | tail -30
+  --talosconfig config-talos/talosconfig | tail -30
 ```
 
 Check that the NIC interface name in `talos.yaml` matches the actual
@@ -333,9 +334,44 @@ after reboot.
 
 </details>
 
+<details>
+<summary><strong><code>talosctl</code>: error constructing client: failed to
+determine endpoints</strong></summary>
+
+`talosctl` distinguishes two targets, and both must be resolvable:
+
+| Flag | Meaning |
+| --- | --- |
+| `--endpoints` / `-e` | The machine `talosctl` opens a connection to. Use a **control plane** node. |
+| `--nodes` / `-n` | The machine the request runs against. The endpoint proxies to it. |
+
+`talosctl gen config` leaves endpoints undefined, so `-n` alone fails.
+`deploy-talos` sets them after it generates the config. To set them on
+a cluster that the script did not create:
+
+```bash
+talosctl --talosconfig config-talos/talosconfig config endpoint 192.168.1.50
+talosctl --talosconfig config-talos/talosconfig config info
+```
+
+After that, `-n <any-node-ip>` works for workers too, proxied through
+the control plane:
+
+```bash
+talosctl --talosconfig config-talos/talosconfig -n 192.168.1.51 version
+```
+
+To avoid passing `--talosconfig` every time, export it:
+
+```bash
+export TALOSCONFIG="$PWD/config-talos/talosconfig"
+```
+
+</details>
+
 ---
 
-## 5. Part 2 — Kentik Agent
+## 5. Part 2: Kentik Agent
 
 This part deploys the Kentik Universal Agent as a Kubernetes
 StatefulSet with all required inbound services.
@@ -357,7 +393,7 @@ sequenceDiagram
     S->>K8s: helm install kagent
     K8s->>A: Start pod (init container copies keypair)
     A->>P: Register with provisioning token
-    P-->>A: Token accepted — agent ID assigned
+    P-->>A: Token accepted, agent ID assigned
     A->>P: Connect via gRPC (authenticated with keypair)
     P-->>A: Push capability config
 ```
@@ -371,7 +407,7 @@ sequenceDiagram
 > Back up the PEM files in `config-kagent/keys/` to a secure location
 > such as a password manager or secrets management system.
 
-### Step 1 — Configure the agent
+### Step 1: Configure the agent
 
 Edit `kagent.yaml`:
 
@@ -385,6 +421,9 @@ linux_capabilities:
   - NET_RAW               # ksynth, livesynth, ranger (ICMP, raw sockets)
   - NET_ADMIN             # livesynth scamper (advanced path tracing)
   - NET_BIND_SERVICE      # SNMP traps (port 162), syslog (port 514)
+  - SYS_CHROOT            # scamper privsep chroot to /var/empty
+  - SETUID                # scamper privsep drops the probe half to nobody
+  - SETGID                # same as above
 
 inbound_services:
   type: LoadBalancer
@@ -408,10 +447,37 @@ resources:
     memory: "1024Mi"
   limits:
     cpu: "2"
-    memory: "2048Mi"
+    memory: "4096Mi"
 ```
 
-### Step 2 — Preview the agent deployment
+> [!IMPORTANT]
+> Size both workers to at least 8 GB. A memory **limit** is not
+> scheduling-constrained. Only the request is. A 4096Mi limit on a
+> node with less allocatable memory lets the container outgrow the
+> node, turning a contained cgroup stall into node-level OOM and
+> kubelet eviction. See [capability processes die](#8-troubleshooting).
+>
+> The agent runs as a single replica, and its `local-path` PV carries
+> node affinity, so the pod is pinned to whichever worker first bound
+> the volume and cannot reschedule elsewhere. Size both workers alike
+> so the binding node is adequate either way. Find the binding node
+> with:
+>
+> ```bash
+> kubectl get pv -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}\
+> {.spec.nodeAffinity.required.nodeSelectorTerms[*]\
+> .matchExpressions[*].values[*]}{"\n"}{end}'
+> ```
+>
+> Proxmox memory changes need a full VM power cycle unless memory
+> hot-plug is enabled. Confirm the change landed:
+>
+> ```bash
+> kubectl get nodes -o custom-columns=\
+> 'NAME:.metadata.name,ALLOC:.status.allocatable.memory'
+> ```
+
+### Step 2: Preview the agent deployment
 
 ```bash
 uv run deploy-kagent --dry-run
@@ -420,7 +486,7 @@ uv run deploy-kagent --dry-run
 Verify the capabilities, inbound service ports, and LoadBalancer IP
 before continuing.
 
-### Step 3 — Deploy the agent
+### Step 3: Deploy the agent
 
 ```bash
 uv run deploy-kagent
@@ -434,6 +500,7 @@ The script runs these steps:
 | 1 | Create the `kentik` namespace with privileged PodSecurity |
 | 2 | Generate ed25519 keypairs and create Kubernetes Secrets |
 | 3 | Install or upgrade the Helm release |
+| 3a | Patch the StatefulSet with `hostNetwork` and `dnsPolicy` |
 | 3b | Rolling restart if this is an upgrade |
 | 4 | Wait for all pods to reach Running state |
 | 5 | Create or update the `kagent-inbound` LoadBalancer Service |
@@ -443,12 +510,12 @@ At the end of Step 5, the script prints the configuration table:
 ```text
 All inbound traffic → 192.168.1.53
 Configure network devices to send:
-  Flow     → 192.168.1.53:9995 (UDP — NetFlow/sFlow/IPFIX)
+  Flow     → 192.168.1.53:9995 (UDP: NetFlow/sFlow/IPFIX)
   SNMP trap → 192.168.1.53:162
   Syslog   → 192.168.1.53:514 (UDP+TCP)
 ```
 
-### Step 4 — Authorize agents in the Portal
+### Step 4: Authorize agents in the Portal
 
 Unless you set `auto_approve: true`, each agent must be approved
 before it activates.
@@ -462,23 +529,23 @@ The agent appears in the active agents list within a few seconds.
 
 ---
 
-## 6. Part 3 — Network Telemetry
+## 6. Part 3: Network Telemetry
 
 This part explains how to configure network devices to send telemetry
 to the agent, and why the Kubernetes network configuration requires
 specific settings.
 
-### The source IP problem — why `hostNetwork` is required
+### The source IP problem: why `hostNetwork` is required
 
 > [!WARNING]
 > This section describes a critical configuration requirement. Without
 > `hostNetwork: true`, all flow data arrives at the Kentik Portal with
 > an incorrect source IP, and the Portal cannot identify the device.
 
-When a Kubernetes pod receives traffic from outside the cluster through
-a LoadBalancer Service, the default behaviour is for the CNI plugin
-(Flannel, Calico, etc.) to apply network address translation (NAT) to
-the source IP address. This is called *masquerading*.
+A LoadBalancer Service carries traffic from outside the cluster to a
+pod. By default the CNI plugin (Flannel, Calico, and similar) then
+applies network address translation to the source IP address. This is
+called *masquerading*.
 
 ```mermaid
 flowchart LR
@@ -489,17 +556,17 @@ flowchart LR
     K["Kentik API\nlookup 10.244.0.1"]
 
     D -->|"src: 192.168.0.2\ndst: 192.168.1.53:9995"| VIP
-    VIP -->|"DNAT only — no SNAT\nexternalTrafficPolicy: Local"| N
+    VIP -->|"DNAT only, no SNAT\nexternalTrafficPolicy: Local"| N
     N -->|"CNI masquerade\nsrc changed to 10.244.0.1"| P
     P -->|"reports exporter 10.244.0.1"| K
-    K -->|"404 — device not found"| P
+    K -->|"404: device not found"| P
 
     style K fill:#f44,color:#fff
 ```
 
-The Kentik API looks up the flow exporter IP (`10.244.0.1`) and
-returns a 404 error because that is a CNI internal address, not a real
-network device.
+The Kentik API looks up the flow exporter IP (`10.244.0.1`) and returns
+a 404 error. That address is a CNI internal address, not a real network
+device.
 
 **The solution** is `hostNetwork: true`:
 
@@ -513,7 +580,7 @@ flowchart LR
     D -->|"src: 192.168.0.2\ndst: 192.168.1.53:9995"| VIP
     VIP -->|"L2 → node's NIC\nno NAT"| N
     N -->|"real src: 192.168.0.2"| K
-    K -->|"200 OK — device found"| N
+    K -->|"200 OK: device found"| N
 
     style K fill:#2a2,color:#fff
 ```
@@ -522,11 +589,31 @@ With `hostNetwork: true`, the pod shares the worker node's network
 namespace. Traffic arrives directly at the host NIC, bypasses CNI
 masquerading, and the pod sees the real source IP.
 
-This is set automatically by `deploy-kagent`. Verify it is applied:
+Because the pod then binds the node's real ports (9995, 162, 514),
+only one replica can run per node.
+
+#### How the setting is applied
+
+> [!WARNING]
+> The upstream `kagent-helm` chart exposes **no** `hostNetwork` value.
+> `--set hostNetwork=true` is silently accepted by Helm, stored in the
+> release values, and never rendered into the StatefulSet. A
+> `helm get values` output showing `hostNetwork: true` therefore proves
+> nothing. `deploy-kagent` applies the setting with an explicit
+> `kubectl patch` after `helm upgrade`, together with
+> `dnsPolicy: ClusterFirstWithHostNet`. Without it the pod resolves
+> through the node's `resolv.conf` and loses cluster DNS.
+
+Verify against the rendered StatefulSet, never against the Helm values:
 
 ```bash
-kubectl get pod kagent-0 -n kentik -o yaml | grep hostNetwork
-# hostNetwork: true
+kubectl get statefulset kagent -n kentik \
+  -o jsonpath='hostNetwork={.spec.template.spec.hostNetwork}{"\n"}dnsPolicy={.spec.template.spec.dnsPolicy}{"\n"}'
+# hostNetwork=true
+# dnsPolicy=ClusterFirstWithHostNet
+
+# When hostNetwork is active, the pod IP equals the node IP
+kubectl get pod kagent-0 -n kentik -o wide
 ```
 
 ### Configure NetFlow on network devices
@@ -579,13 +666,14 @@ interface Ethernet1/1
 If you bind the listener to a specific interface, both nodes sync the
 same config. Use the physical IP of each node in Kentik as separate
 device entries, plus the CARP VIP as a third entry. Do not bind to
-`0.0.0.0` — FreeBSD does not respond to SNMP correctly when bound
+`0.0.0.0`. FreeBSD does not respond to SNMP correctly when bound
 to all interfaces.
 
 </details>
 
 <details>
-<summary><strong>sFlow (port 6343 — if using separate sFlow devices)</strong></summary>
+<summary><strong>sFlow (port 6343, separate sFlow devices)</strong>
+</summary>
 
 > [!NOTE]
 > If your devices send sFlow, add a separate port entry to
@@ -619,7 +707,7 @@ Service is required for polling.
 >
 > Add this IP to the SNMP ACL on each device you want to poll.
 
-#### OPNsense HA — SNMP ACL
+#### OPNsense HA: SNMP ACL
 
 For an OPNsense HA pair, add the worker node's IP to the SNMP access
 list on **both** nodes. The agent may poll either node independently.
@@ -652,7 +740,7 @@ Devices send syslog to `192.168.1.53:514` via UDP or TCP.
 Run these checks in order. Each check confirms one layer of the
 telemetry path.
 
-### Check 1 — Agent is connected
+### Check 1: Agent is connected
 
 ```bash
 kubectl exec -it kagent-0 -n kentik -c kagent -- \
@@ -662,7 +750,7 @@ kubectl exec -it kagent-0 -n kentik -c kagent -- \
 
 Expected output: `CONNECTED`
 
-### Check 2 — Flow packets reach the pod
+### Check 2: Flow packets reach the pod
 
 Run this while a network device is actively sending flow:
 
@@ -676,27 +764,37 @@ Expected output: packets with **real device IPs** as the source
 (e.g. `192.168.0.2`), not internal addresses like `10.244.x.x`.
 
 If you see Flannel internal addresses instead of real device IPs,
-verify that `hostNetwork: true` is applied:
+verify that `hostNetwork: true` reached the StatefulSet. Check the
+rendered workload, not the Helm values. The chart ignores the value
+and the deploy script patches it in:
 
 ```bash
-kubectl get pod kagent-0 -n kentik -o yaml | grep hostNetwork
+kubectl get statefulset kagent -n kentik \
+  -o jsonpath='hostNetwork={.spec.template.spec.hostNetwork}{"\n"}dnsPolicy={.spec.template.spec.dnsPolicy}{"\n"}'
+# hostNetwork=true
+# dnsPolicy=ClusterFirstWithHostNet
+
+# The pod IP should equal the node IP when hostNetwork is active
+kubectl get pod kagent-0 -n kentik -o wide
 ```
 
-### Check 3 — NET_RAW capability is active
+### Check 3: NET_RAW capability is active
 
 This check is required for ICMP ping synthetic tests to work:
 
 ```bash
 kubectl exec -it kagent-0 -n kentik -c kagent -- \
   bash -c "cat /proc/self/status | grep CapEff"
-# CapEff: 0000000000002000  ← bit 13 = NET_RAW
+# CapEff: 0000000000043400
+#   bit 10 = NET_BIND_SERVICE   bit 12 = NET_ADMIN   bit 13 = NET_RAW
+#   bit 18 = SYS_CHROOT   bits 6,7 = SETGID, SETUID
 ```
 
 If `CapEff` is `0000000000000000`, run `uv run deploy-kagent` again.
 The `runAsUser=0` and `allowPrivilegeEscalation=true` settings in the
 Helm values resolve this.
 
-### Check 4 — SNMP polling works
+### Check 4: SNMP polling works
 
 Send a test SNMP query from inside the pod to a device:
 
@@ -709,7 +807,7 @@ kubectl exec -it kagent-0 -n kentik -c kagent -- \
 If SNMP polling still fails after this, check the device's SNMP ACL
 and verify the worker node IP is in the allowed list.
 
-### Check 5 — Flow appears in Kentik Portal
+### Check 5: Flow appears in Kentik Portal
 
 1. Open the Kentik Portal.
 2. Go to **Flow** or **NMS**.
@@ -728,7 +826,7 @@ data to appear in the Portal.
 
 **Cause**: The source IP in the UDP socket is a Flannel internal
 address (`10.244.x.x`), not the real device IP. Kentik cannot match
-the flow to a registered device.
+the flow to a registered device, so the record is discarded.
 
 **Check**:
 
@@ -739,14 +837,28 @@ kubectl debug -it pod/kagent-0 -n kentik \
 ```
 
 If source IPs are `10.244.x.x`, `hostNetwork: true` is not applied.
-
-**Fix**:
+Confirm against the StatefulSet, because the chart ignores the Helm
+value of the same name:
 
 ```bash
-helm upgrade kagent \
-  https://github.com/kentik/kagent-helm/archive/refs/heads/main.tar.gz \
-  --namespace kentik --reuse-values --set hostNetwork=true
+kubectl get statefulset kagent -n kentik \
+  -o jsonpath='{.spec.template.spec.hostNetwork}{"\n"}'
 ```
+
+**Fix**: run `uv run deploy-kagent`, which re-applies the patch. To do
+it by hand:
+
+```bash
+kubectl patch statefulset kagent -n kentik --type=merge -p \
+  '{"spec":{"template":{"spec":{"hostNetwork":true,"dnsPolicy":"ClusterFirstWithHostNet"}}}}'
+```
+
+> [!NOTE]
+> `helm upgrade ... --set hostNetwork=true` does **not** work. The
+> upstream chart has no such value, so Helm stores it and renders
+> nothing. Omitting `dnsPolicy: ClusterFirstWithHostNet` leaves the
+> pod resolving through the node's `resolv.conf`, which breaks cluster
+> DNS lookups.
 
 </details>
 
@@ -816,24 +928,216 @@ PodSecurity. The deploy script labels it automatically.
 </details>
 
 <details>
-<summary><strong>CapEff is 0 — NET_RAW not active</strong></summary>
+<summary><strong>CapEff is 0: capabilities not active</strong></summary>
 
-**Cause**: The container runs as a non-root user, and Linux clears
-capabilities when `setresuid()` transitions from root to non-root.
-Ambient capabilities are also cleared by Flannel's CNI setup.
+**Cause**: the container runs as a non-root user. Adding entries to
+`securityContext.capabilities.add` does **not** grant them to a
+non-root process. On `execve`, a process with no file capabilities and
+no ambient set receives nothing, so the requested capabilities land in
+the bounding set only:
 
-**Fix**: run as root with `allowPrivilegeEscalation: true`. The
-deploy script sets these automatically. Verify:
+```text
+uid=500
+CapPrm: 0000000000000000   ← nothing granted
+CapEff: 0000000000000000   ← nothing effective
+CapBnd: 00000000000434c0   ← the six are bounded, not granted
+```
+
+This is measured behaviour on this chart, not theory. It means the
+chart's own defaults (`runAsUser: 500` plus `capabilities.add:
+[NET_RAW]`) grant `NET_RAW` to nothing.
+
+**Fix**: run as root. Keep `allowPrivilegeEscalation` at `false`. Root
+retains its capabilities even when `NoNewPrivs` is `1`. Scamper's
+privsep `setuid` also still works, because the kernel always permits a
+privilege drop.
 
 ```bash
-kubectl get pod kagent-0 -n kentik -o yaml | \
-  grep -E "runAsUser|allowPrivilege|runAsNonRoot"
-# runAsUser: 0
-# allowPrivilegeEscalation: true
-# runAsNonRoot: false
+kubectl get pod kagent-0 -n kentik -o jsonpath=\
+'{.spec.securityContext}{"\n"}{.spec.containers[0].securityContext}{"\n"}'
+# {"fsGroup":500,"runAsNonRoot":false,"runAsUser":0}
+# {"allowPrivilegeEscalation":false,...}
+```
+
+Always confirm against the kernel, not the pod spec:
+
+```bash
+kubectl exec kagent-0 -n kentik -c kagent -- grep CapEff /proc/1/status
+# CapEff: 00000000000434c0
 ```
 
 If any value is wrong, run `uv run deploy-kagent` to re-apply.
+
+</details>
+
+<details>
+<summary><strong>Synthetic ping fails: "could not open icmp4 socket:
+Operation not permitted"</strong></summary>
+
+**Symptom**: a ksynth ping or traceroute test errors out with
+`stop_reason: "error"`, `ping_sent: 0`, and
+`errmsg: "could not open icmp4 socket: Operation not permitted"`.
+This happens with every probe method, including `tcp-syn-sport`.
+
+**Do not** assume `NET_RAW` is missing. Check the agent log first:
+
+```bash
+kubectl logs kagent-0 -n kentik | grep scamper_privsep_init
+# scamper_privsep_init: could not chroot to /var/empty: Operation not permitted
+```
+
+**Cause**: `scamper` uses privilege separation. It forks, `chroot()`s
+to `/var/empty`, then drops the probe half to an unprivileged user.
+Those steps need `SYS_CHROOT`, `SETUID`, and `SETGID`. The chart drops
+all capabilities and adds back only the `NET_*` ones, so `privsep_init`
+fails. The probe half then holds no raw-socket privilege, and the ICMP
+socket open returns `EPERM`. `NET_RAW` is present on PID 1 throughout,
+which is why the error misdirects.
+
+**Fix**: ensure `kagent.yaml` lists all six capabilities, then run
+`uv run deploy-kagent`:
+
+```yaml
+linux_capabilities:
+  - NET_RAW
+  - NET_ADMIN
+  - NET_BIND_SERVICE
+  - SYS_CHROOT
+  - SETUID
+  - SETGID
+```
+
+Confirm the scamper processes carry them at runtime:
+
+```bash
+kubectl exec kagent-0 -n kentik -- sh -c \
+  'for p in /proc/[0-9]*; do grep -H "^CapEff" $p/status; done' | sort -u
+```
+
+</details>
+
+<details>
+<summary><strong>Capability processes die but the pod never
+restarts</strong></summary>
+
+Every capability (`kagent`, `ksynth`, `kproxy`, `ranger`, `livesynth`,
+and the `scamper` children) runs as a sibling process inside one
+container, sharing a single memory cgroup. There is no per-capability
+isolation, so one misbehaving capability starves the rest.
+
+Kubernetes shows nothing: `Restart Count: 0`, `Events: <none>`, and no
+`OOMKilled`. Read the cgroup directly instead.
+
+```bash
+kubectl exec kagent-0 -n kentik -- sh -c \
+  'cat /sys/fs/cgroup/memory.max /sys/fs/cgroup/memory.current \
+       /sys/fs/cgroup/memory.peak; cat /sys/fs/cgroup/memory.events'
+```
+
+Interpret `memory.events` carefully. The two counters mean different
+things and point at different causes:
+
+| Counter | Meaning | Implication |
+| --- | --- | --- |
+| `oom_kill` > 0 | The kernel killed a process in this cgroup | A true OOM kill. `talosctl dmesg \| grep -i oom` will show it. |
+| `oom_kill` = 0 but `max` large | The limit was hit and reclaim was forced, but nothing was killed | Thrashing, not killing. `dmesg` shows nothing. Children stall on allocation and `fork()`, and the supervisor restarts the ones that look hung. |
+
+Both counters are cumulative for the container's lifetime, so as long
+as `Restart Count` is 0 they cover the whole period since the pod
+started.
+
+Confirm stall time with PSI:
+
+```bash
+kubectl exec kagent-0 -n kentik -- cat /sys/fs/cgroup/memory.pressure
+# full total=<microseconds all tasks were stalled>
+```
+
+If `memory.peak` sits at exactly `memory.max`, demand was clipped and
+the real requirement is unknown. Raise `resources.limits.memory` and
+re-measure rather than guessing.
+
+**Fix**: raise the limit to `4096Mi` in `kagent.yaml`, after confirming
+the node can back it. Then run `uv run deploy-kagent`. See the
+synthetic ping entry above for the crash loop that drives the spike. A
+failing `scamper` privsep retries continuously and multiplies child
+processes.
+
+The image ships no `ps`, so enumerate `/proc` to count children:
+
+```bash
+kubectl exec kagent-0 -n kentik -- sh -c \
+  'for p in /proc/[0-9]*; do sed -n "s/^Name:[ \t]*//p" $p/status; done' \
+  | sort | uniq -c | sort -rn
+```
+
+</details>
+
+<details>
+<summary><strong>Agent will not register: "read-only file system"
+on /opt/ua/keys</strong></summary>
+
+```text
+failed to register: failed to create or load keypair (directory /opt/ua/keys):
+failed to save private key: open /opt/ua/keys/private_key.pem:
+read-only file system
+```
+
+**Cause**: the keypair never reached the pod, so the agent fell back to
+generating its own, into a mount it cannot write. The chart's
+`setup-keypair` init container derives the StatefulSet ordinal from
+the shell's `$HOSTNAME`:
+
+```sh
+POD_INDEX=$(echo $HOSTNAME | grep -o '[0-9]*$')
+```
+
+Under `hostNetwork: true` the pod shares the **node's** UTS namespace,
+so `$HOSTNAME` is the node name (`talos-abc-xyz`), not the pod name
+(`kagent-0`). A node name that does not end in digits yields an empty
+ordinal, the copy is skipped, and the failure is silent:
+
+```bash
+kubectl logs kagent-0 -n kentik -c setup-keypair
+# Pod index:
+# Warning: No keypair found for pod-
+```
+
+**Fix**: `deploy-kagent` injects a `HOSTNAME` env var sourced from the
+downward API into that init container. An explicitly declared env var
+takes precedence over the runtime-supplied one, so the chart's own
+script resolves the ordinal correctly. Confirm it worked:
+
+```bash
+kubectl logs kagent-0 -n kentik -c setup-keypair
+# Pod index: 0
+# Keypair for pod-0 copied successfully
+```
+
+> [!WARNING]
+> Do not fix this by overriding the init container's `command`. Helm
+> uses server-side apply and owns that field, so a `kubectl patch`
+> takes co-ownership and every later `helm upgrade` fails with:
+>
+> ```text
+> Apply failed with 1 conflict: conflict with "kubectl-patch":
+> .spec.template.spec.initContainers[name="setup-keypair"].command
+> ```
+>
+> Patch only fields the chart does not set (the chart declares no `env`
+> on this container). If you already hit the conflict, restore the
+> field to the chart's rendered value so both managers agree:
+>
+> ```bash
+> helm template kagent <chart> --set deploymentType=statefulset \
+>   --set persistence.keypair.type=secret --set kagent.companyId=1 \
+>   --set kagent.provisioningToken=x
+> ```
+
+Patch the StatefulSet with `--type=strategic`, not `--type=merge`. A
+JSON merge patch replaces whole arrays, so `initContainers` would lose
+its image and volume mounts. Strategic merge matches list entries by
+`name`.
 
 </details>
 
@@ -851,12 +1155,13 @@ kubectl exec -it kagent-0 -n kentik -c kagent -- \
 ```
 
 `OK` means UDP 161 is reachable. If SNMP polling still fails, the
-device is rejecting the query — check community string and version.
+device is rejecting the query. Check the community string and version.
 
 </details>
 
 <details>
-<summary><strong>livesynth keeps restarting with exit status 255</strong></summary>
+<summary><strong>livesynth restarts with exit status 255</strong>
+</summary>
 
 **Cause**: `scamper` (used by livesynth for path tracing) needs
 `NET_ADMIN` in addition to `NET_RAW`.
@@ -875,7 +1180,8 @@ Then run `uv run deploy-kagent`.
 </details>
 
 <details>
-<summary><strong>OPNsense SNMP does not respond when bound to 0.0.0.0</strong></summary>
+<summary><strong>OPNsense SNMP does not answer on 0.0.0.0</strong>
+</summary>
 
 This is a known FreeBSD `bsnmpd` behaviour. When bound to all
 interfaces, the daemon selects the wrong source IP for UDP replies,
@@ -894,18 +1200,65 @@ To exclude SNMP from sync:
 
 ## 9. Reference
 
+### Validation
+
+`make validate` runs every check that CI runs. It needs no cluster and
+no Proxmox, and finishes in a few seconds.
+
+| Target | Checks |
+| --- | --- |
+| `make lint` | `ruff` static analysis |
+| `make test` | Contract tests, including the rendered Helm manifest |
+| `make docs` | `markdownlint` |
+| `make plan` | Both deploy scripts produce a plan from the examples |
+| `make secrets` | `gitleaks` history scan (install it separately) |
+
+Run the same checks automatically before every push:
+
+```bash
+make install-hooks
+```
+
+The contract tests in [tests/](tests/) assert the parts of a deployment
+that stay invisible until a cluster runs. Each one corresponds to a
+defect that reached a live agent at least once:
+
+- The example config grants the capabilities that scamper privsep needs.
+- The rendered StatefulSet still carries them after templating.
+- The pod runs as root, because a non-root process receives no
+  capabilities at all.
+- Worker nodes are large enough to back the agent's memory limit.
+- No credentials or generated key material are tracked.
+
+Two tests watch the upstream chart rather than this repository. They
+fail when `kagent-helm` starts supporting `hostNetwork`, or when it
+stops deriving the StatefulSet ordinal from `$HOSTNAME`. Either change
+means the patches in `deploy-kagent` need review.
+
 ### Configuration files
 
 | File | Purpose | Committed to git? |
 | --- | --- | --- |
-| `.env` | Secrets and credentials | No — gitignored |
-| `talos.yaml` | Cluster topology | No — gitignored |
-| `kagent.yaml` | Agent deployment config | No — gitignored |
-| `.env.example` | Template for `.env` | Yes |
-| `talos.yaml.example` | Template for `talos.yaml` | Yes |
-| `kagent.yaml.example` | Template for `kagent.yaml` | Yes |
-| `talos-config/` | Generated Talos certs and patches | No — gitignored |
-| `config-kagent/` | Generated keypairs and manifests | No — gitignored |
+| `.env` | Secrets and credentials | No (gitignored) |
+| `talos.yaml` | Cluster topology | No (gitignored) |
+| `kagent.yaml` | Agent deployment config | No (gitignored) |
+| [`.env.example`](.env.example) | Template for `.env` | Yes |
+| [`talos.yaml.example`](talos.yaml.example) | Template for `talos.yaml` | Yes |
+| [`kagent.yaml.example`](kagent.yaml.example) | Template for `kagent.yaml` | Yes |
+| `config-talos/` | Generated Talos certs and patches | No (gitignored) |
+| `config-kagent/` | Generated keypairs and manifests | No (gitignored) |
+
+> [!WARNING]
+> `.gitignore` protects `config-*/` only. `config-talos/talosconfig`
+> contains an `os:admin` client certificate granting full cluster
+> control, and `config-kagent/keys/` holds the agent's private keys.
+> If you point `TALOS_CONFIG_DIR` or `KAGENT_CONFIG_DIR` at a path
+> without the `config-` prefix, those secrets land outside the ignore
+> rule and can be committed. Verify with:
+>
+> ```bash
+> git check-ignore -q config-talos/ && echo ignored || echo EXPOSED
+> ```
 
 ### CLI commands
 
@@ -958,5 +1311,5 @@ kubectl delete clusterrole local-path-provisioner-role
 kubectl delete clusterrolebinding local-path-provisioner-bind
 
 # Remove local files
-rm -rf config-kagent/ talos-config/
+rm -rf config-kagent/ config-talos/
 ```

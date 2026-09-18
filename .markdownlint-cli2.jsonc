@@ -1,0 +1,28 @@
+{
+  // Read by both markdownlint-cli2 and the VS Code markdownlint extension.
+  "config": {
+    // Collapsible troubleshooting entries are deliberate: they keep the long
+    // runbook scannable. Markdown has no native equivalent.
+    "MD033": {
+      "allowed_elements": ["details", "summary", "strong", "code"]
+    },
+
+    // Prose wraps at the markdownlint default. Tables, code and headings
+    // are exempt: breaking a shell one-liner or a table row mid-token hurts
+    // more than the long line does.
+    "MD013": {
+      "line_length": 80,
+      "code_blocks": false,
+      "tables": false,
+      "headings": false
+    },
+
+    // Troubleshooting entries reuse headings like "Cause" and "Fix" across
+    // different sections.
+    "MD024": {
+      "siblings_only": true
+    }
+  },
+  "globs": ["**/*.md"],
+  "ignores": ["**/node_modules/**", "**/.venv/**"]
+}

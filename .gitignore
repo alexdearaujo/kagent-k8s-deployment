@@ -9,10 +9,10 @@ wheels/
 # Virtual environments
 .venv
 
-# Secret values — copy .env.example and fill in your credentials
+# Secret values: copy .env.example and fill in your credentials
 .env
 
-# Live deployment configs — copy *.example and customise for your environment
+# Live deployment configs: copy *.example and customise for your environment
 talos.yaml
 kagent.yaml
 

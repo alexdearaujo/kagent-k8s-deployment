@@ -153,7 +153,8 @@ def discover_node_ip(
                         ip = addr["ip-address"]
                         print(f"  ✅ {node.name} → {ip}")
                         return ip
-        except Exception:  # noqa: BLE001, S110 — QEMU agent can fail transiently during boot
+        # The QEMU agent fails transiently while the node boots; keep polling.
+        except Exception:  # noqa: BLE001, S110
             pass
         time.sleep(delay)
         delay = min(delay * 1.5, 30)
@@ -228,6 +229,15 @@ def gen_talos_config(cluster: ClusterConfig) -> None:
         "--force",
     ])
     print("  ✅ Config generated.")
+
+    talosconfig = cluster.talos_config_dir / "talosconfig"
+    cp_ips = [n.ip for n in cluster.control_plane_nodes]
+    _run([
+        "talosctl", "config", "endpoint", *cp_ips,
+        "--talosconfig", str(talosconfig),
+    ])
+    print(f"  ✅ Endpoints set to {', '.join(cp_ips)}.")
+
     print("  Writing per-node network patches...")
     for node in cluster.nodes:
         _write_node_patch(node, cluster.network, cluster.talos_config_dir)
@@ -366,10 +376,10 @@ def verify_metallb(cluster: ClusterConfig) -> None:
         if assigned == expected_ip:
             print(f"  ✅ MetalLB assigned expected IP: {assigned}")
         elif assigned:
-            print(f"  ⚠️  MetalLB assigned {assigned} — expected {expected_ip}")
+            print(f"  ⚠️  MetalLB assigned {assigned}, expected {expected_ip}")
             print("     Check IPAddressPool range in talos.yaml.")
         else:
-            print("  ⚠️  No IP assigned within 60s — MetalLB may still be initialising.")
+            print("  ⚠️  No IP assigned within 60s. MetalLB may still be initialising.")
     finally:
         _run(["kubectl", "delete", "svc", "metallb-lb-verify", "-n", "default"], check=False)
 
@@ -422,13 +432,14 @@ def main() -> None:
                         help="Skip Talos phases and only install/configure MetalLB on an existing cluster")
     args = parser.parse_args()
 
-    check_talosctl()
-
     cluster = load_config(args.config)
 
+    # Printing a plan touches nothing, so it runs before the preflight check.
     if args.dry_run:
         dry_run(cluster)
         return
+
+    check_talosctl()
 
     if args.metallb_only:
         print(f"=== MetalLB only: {cluster.name} ===")
