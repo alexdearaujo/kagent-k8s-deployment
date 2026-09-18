@@ -1211,13 +1211,40 @@ no Proxmox, and finishes in a few seconds.
 | `make test` | Contract tests, including the rendered Helm manifest |
 | `make docs` | `markdownlint` |
 | `make plan` | Both deploy scripts produce a plan from the examples |
+| `make privacy` | Every tracked file, for private information |
 | `make secrets` | `gitleaks` history scan (install it separately) |
 
-Run the same checks automatically before every push:
+Install the hooks so the checks run on their own:
 
 ```bash
 make install-hooks
 ```
+
+That installs two hooks. `pre-commit` scans the staged changes only, so
+it stays fast. `pre-push` runs the whole of `make validate`.
+
+### Keeping private information out of the repository
+
+Two tools split the work, because they look for different things.
+
+| Tool | Finds |
+| --- | --- |
+| `gitleaks` | Credential *formats*: API keys, tokens, private keys |
+| [tools/privacy_scan.py](tools/privacy_scan.py) | Data that is private because of what it *refers to*: IP addresses (including RFC1918), IPv6, MAC addresses, email addresses, real Talos node names, and any term listed in `.privacy-terms` |
+
+This repository publishes example addresses and placeholder identities on
+purpose, so the scanner needs to know which ones are deliberate.
+[.privacy-scan.toml](.privacy-scan.toml) holds that allowlist. Anything
+not listed is reported.
+
+Customer names cannot go in a tracked allowlist, because writing them
+down is the leak. They go in `.privacy-terms`, which is gitignored. Copy
+[.privacy-terms.example](.privacy-terms.example) to get started.
+
+To clear a finding, fix the content. If the value is genuinely safe,
+either add it to `.privacy-scan.toml` or put `# privacy-scan: allow` on
+the line. Prefer the allowlist: it is reviewable, and the pragma hides
+the whole line from every rule.
 
 The contract tests in [tests/](tests/) assert the parts of a deployment
 that stay invisible until a cluster runs. Each one corresponds to a
@@ -1247,6 +1274,8 @@ means the patches in `deploy-kagent` need review.
 | [`kagent.yaml.example`](kagent.yaml.example) | Template for `kagent.yaml` | Yes |
 | `config-talos/` | Generated Talos certs and patches | No (gitignored) |
 | `config-kagent/` | Generated keypairs and manifests | No (gitignored) |
+| `.privacy-terms` | Customer names the scanner rejects | No (gitignored) |
+| [`.privacy-scan.toml`](.privacy-scan.toml) | Allowlist of deliberate example values | Yes |
 
 > [!WARNING]
 > `.gitignore` protects `config-*/` only. `config-talos/talosconfig`

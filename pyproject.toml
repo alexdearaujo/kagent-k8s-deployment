@@ -26,6 +26,10 @@ dev = [
 deploy-talos = "deploy_talos_proxmox:main"
 deploy-kagent = "deploy_talos_proxmox.deploy_kagent:main"
 
+[tool.pytest.ini_options]
+# tools/ holds repo tooling that is not part of the shipped package.
+pythonpath = ["tools"]
+
 [build-system]
 requires = ["uv_build>=0.12.1,<0.13.0"]
 build-backend = "uv_build"

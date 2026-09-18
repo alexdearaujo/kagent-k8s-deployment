@@ -1,0 +1,43 @@
+# Allowlist for tools/privacy_scan.py.
+#
+# This repository publishes example addresses and placeholder identities on
+# purpose, so the scanner needs to know which ones are deliberate. Anything
+# not listed here is reported. Keep the lists narrow: a broad entry silently
+# disables the check it belongs to.
+
+[allow]
+# Example ranges used throughout the README and the *.example configs, plus
+# the Flannel pod CIDR that appears in the source-IP explanation.
+networks = [
+  "192.168.0.0/24",
+  "192.168.1.0/24",
+  "10.0.0.0/24",
+  "10.244.0.0/16",
+]
+
+# Public resolvers used as synthetic test targets. They belong to no customer.
+literals = [
+  "1.1.1.1",
+  "8.8.8.8",
+  "8.8.4.4",
+  "9.9.9.9",
+  "talos-abc-xyz",
+]
+
+# kentik.com is the author's own domain; the rest are placeholder templates.
+email_domains = [
+  "kentik.com",
+  "kentik.eu",
+  "example.com",
+  "company.com",
+  "co.com",
+]
+
+[scan]
+# Real customer names and hostnames cannot be written down in a tracked file,
+# so they live here instead. See .privacy-terms.example.
+terms_file = ".privacy-terms"
+
+# uv.lock is machine-generated noise. The scanner's own test file holds
+# synthetic leaks on purpose and would otherwise report itself.
+exclude_paths = ["uv.lock", "tests/test_privacy_scan.py"]
